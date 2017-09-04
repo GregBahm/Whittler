@@ -1,0 +1,125 @@
+﻿#pragma kernel PointSetter
+#pragma kernel LineOfIntersection
+
+struct TriangleIntersection
+{
+    int Present;
+    float3 Start;
+    float3 End;
+};
+
+RWStructuredBuffer<TriangleIntersection> _IntersectionBuffer;
+
+RWStructuredBuffer<float3> _TriangleABuffer;
+RWStructuredBuffer<float3> _TriangleBBuffer;
+
+float3 _TriPointA1Pos;
+float3 _TriPointA2Pos;
+float3 _TriPointA3Pos;
+
+float3 _TriPointB1Pos;
+float3 _TriPointB2Pos;
+float3 _TriPointB3Pos;
+
+[numthreads(1,1,1)]
+void PointSetter(uint3 id : SV_DispatchThreadID)
+{
+    _TriangleABuffer[0] = _TriPointA1Pos;
+    _TriangleABuffer[1] = _TriPointA2Pos;
+    _TriangleABuffer[2] = _TriPointA3Pos;
+    _TriangleBBuffer[0] = _TriPointB1Pos;
+    _TriangleBBuffer[1] = _TriPointB2Pos;
+    _TriangleBBuffer[2] = _TriPointB3Pos;
+}
+
+struct Plane
+{
+    float3 Normal;
+    float Distance;
+};
+
+struct PlanePlaneIntersection
+{
+    bool Present;
+    float3 PointOnLine;
+    float3 NormalOfLine;
+};
+
+struct FlatLineLineIntersection
+{
+    bool Present;
+    float2 Position;
+};
+
+Plane GetPlaneFromThreePoints(float3 pointA, float3 pointB, float3 pointC)
+{
+    Plane ret;
+    float3 dir = cross(pointB - pointA, pointC - pointA);
+    float3 norm = normalize(dir);
+    ret.Normal = norm;
+    ret.Distance = dot(norm, -pointA);
+    return ret;
+}
+
+PlanePlaneIntersection GetPlanePlaneIntersection(Plane planeA, Plane planeB)
+{
+    PlanePlaneIntersection ret;
+
+    float3 normalOfLine = cross(planeA.Normal, planeB.Normal);
+    float determinant = normalOfLine.x * normalOfLine.x +
+        normalOfLine.y * normalOfLine.y +
+        normalOfLine.z * normalOfLine.z; // TODO: replace this with dot(normalOfLine, normalOfLine) if everything else works;
+    ret.Present = determinant > 0;
+    float3 crossA = cross(normalOfLine, planeB.Normal);
+    float3 crossB = cross(planeA.Normal, normalOfLine);
+    ret.PointOnLine = ((crossA * planeA.Distance) + (crossB * planeB.Distance)) / determinant;
+    ret.NormalOfLine = normalOfLine;
+
+    return ret; 
+}
+
+FlatLineLineIntersection GetFlatLinesIntersection(float2 segAStart, float2 segAEnd,
+                                            float2 segBStart, float2 segBEnd)
+{
+    FlatLineLineIntersection ret;
+
+    float determinant = (segBEnd.y - segBStart.y) * (segAEnd.x - segAStart.x)
+        - (segBEnd.x - segBStart.x) * (segAEnd.y - segAStart.y);
+            
+    float n_a = (segBEnd.x - segBStart.x) * (segAStart.y - segBStart.y)
+        - (segBEnd.y - segBStart.y) * (segAStart.x - segBStart.x);
+
+    float n_b = (segAEnd.x - segAStart.x) * (segAStart.y - segBStart.y)
+        - (segAEnd.y - segAStart.y) * (segAStart.x - segBStart.x);
+
+    ret.Present = determinant == 0;
+            
+    float ua = n_a / determinant;
+    float ub = n_b / determinant;
+            
+    float retX = segAStart.x + (ua * (segAEnd.x - segAStart.x));
+    float retY = segAStart.y + (ua * (segAEnd.y - segAStart.y));
+    ret.Position = float2(retX, retY);
+    return ret;
+}
+
+[numthreads(1, 1, 1)]
+void LineOfIntersection(uint3 id : SV_DispatchThreadID) 
+{
+    Plane planeA = GetPlaneFromThreePoints(_TriangleABuffer[0],
+        _TriangleABuffer[1],
+        _TriangleABuffer[2]);
+    Plane planeB = GetPlaneFromThreePoints(_TriangleBBuffer[0],
+        _TriangleBBuffer[1],
+        _TriangleBBuffer[2]);
+
+    PlanePlaneIntersection planeIntersect = GetPlanePlaneIntersection(planeA, planeB);
+
+    TriangleIntersection triIntersect;
+    triIntersect.Present = 1;
+    triIntersect.Start = planeIntersect.PointOnLine;
+    triIntersect.End = planeIntersect.NormalOfLine;
+
+    _IntersectionBuffer[0] = triIntersect;
+
+}
